@@ -450,6 +450,23 @@
   }
   .bubble tr:nth-child(even) td{ background:rgba(255,255,255,0.02); }
 
+  /* ---------- VERIFY BUTTON ---------- */
+  .verify-btn{
+    margin-top:8px;
+    display:inline-flex; align-items:center; gap:6px;
+    padding:6px 12px;
+    border-radius:100px;
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--ink-lo);
+    font-size:12px; font-weight:600;
+    cursor:pointer;
+    transition:background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .verify-btn:hover:not(:disabled){ background:var(--bg-panel-raised); color:var(--ink-hi); border-color:var(--violet-400); }
+  .verify-btn:disabled{ opacity:0.6; cursor:default; }
+  .verify-btn svg{ width:12px; height:12px; }
+
   .msg-time{
     font-size:10.5px; color:var(--ink-faint); padding:0 4px;
   }
@@ -1116,7 +1133,12 @@ async function openConversation(id){
 
   welcome.style.display = 'none';
   chatInner.querySelectorAll('.msg-row').forEach(el => el.remove());
-  (messages || []).forEach(m => appendMessage(m.role, m.content, { meta: m.meta, mode: m.mode, animate: false }));
+  (messages || []).forEach((m, idx) => {
+    const priorUser = m.role === 'assistant'
+      ? [...messages.slice(0, idx)].reverse().find(x => x.role === 'user')
+      : null;
+    appendMessage(m.role, m.content, { meta: m.meta, mode: m.mode, animate: false, userMessage: priorUser?.content });
+  });
   scrollToBottom(false);
 }
 
@@ -1152,7 +1174,7 @@ function appendMessage(role, content, opts = {}){
   bubble.innerHTML = renderMarkdown(content);
   col.appendChild(bubble);
 
-  if (role === 'assistant' && opts.mode === 'research' && opts.meta && (opts.meta.selected_route || opts.meta.confidence !== undefined)){
+  if (role === 'assistant' && opts.meta && (opts.meta.selected_route || opts.meta.confidence !== undefined)){
     col.appendChild(buildTraceStrip(opts.meta));
   }
 
@@ -1160,10 +1182,54 @@ function appendMessage(role, content, opts = {}){
     col.appendChild(buildSourcesList(opts.meta.sources));
   }
 
+  const wasGrounded = opts.mode === 'research' || opts.meta?.auto_grounded;
+  if (role === 'assistant' && !wasGrounded && opts.userMessage){
+    col.appendChild(buildVerifyButton(opts.userMessage, col));
+  }
+
   row.appendChild(avatar);
   row.appendChild(col);
   chatInner.appendChild(row);
   return row;
+}
+
+function buildVerifyButton(userMessage, col){
+  const btn = document.createElement('button');
+  btn.className = 'verify-btn';
+  btn.type = 'button';
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <span>Verify with search</span>
+  `;
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.querySelector('span').textContent = 'Checking…';
+    try {
+      const { data, error } = await supabase.functions.invoke('gyiro-chat', {
+        body: {
+          conversation_id: activeConversationId,
+          message: userMessage,
+          mode: 'chat',
+          force_verify: true,
+        },
+      });
+      if (error || data?.error){
+        btn.querySelector('span').textContent = "Couldn't verify — try again";
+        btn.disabled = false;
+        return;
+      }
+      btn.remove();
+      appendMessage('assistant', data.answer, { meta: data.meta, mode: 'chat' });
+      scrollToBottom();
+      await loadConversations();
+    } catch (_) {
+      btn.querySelector('span').textContent = "Couldn't verify — try again";
+      btn.disabled = false;
+    }
+  });
+
+  return btn;
 }
 
 function buildSourcesList(sources){
@@ -1228,7 +1294,7 @@ function buildTraceStrip(meta){
   strip.className = 'trace-strip';
   strip.innerHTML = `
     <span class="confidence-dot"></span>
-    <span>Checked live sources${confidencePct !== null ? ` · ${confidencePct}% confidence` : ''}</span>
+    <span>${meta.auto_grounded ? 'Verified this with a live search' : 'Checked live sources'}${confidencePct !== null ? ` · ${confidencePct}% confidence` : ''}</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
   `;
 
@@ -1351,7 +1417,7 @@ async function sendMessage(text){
     if (data.conversation_id && data.conversation_id !== activeConversationId){
       activeConversationId = data.conversation_id;
     }
-    appendMessage('assistant', data.answer, { meta: data.meta, mode: currentMode });
+    appendMessage('assistant', data.answer, { meta: data.meta, mode: currentMode, userMessage: text });
     scrollToBottom();
     await loadConversations();
     const conv = conversations.find(c => c.id === activeConversationId);
