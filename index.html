@@ -449,6 +449,41 @@
   .trace-detail .trace-row{ display:flex; gap:6px; margin-bottom:3px; }
   .trace-detail .trace-row b{ color:var(--ink-mid); font-weight:700; min-width:82px; flex-shrink:0; }
 
+  /* ---------- SOURCES / CITATIONS ---------- */
+  .sources-list{ margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .sources-label{ font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint); margin:2px 0 2px 2px; }
+  .source-card{
+    display:flex; align-items:center; gap:9px;
+    padding:8px 10px;
+    background:var(--bg-panel);
+    border:1px solid var(--line-soft);
+    border-radius:var(--radius-sm);
+  }
+  .source-num{
+    flex-shrink:0; width:19px; height:19px; border-radius:6px;
+    background:rgba(139,92,246,0.18); color:var(--violet-300);
+    font-size:11px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .source-favicon{ flex-shrink:0; width:16px; height:16px; border-radius:3px; }
+  .source-text{ min-width:0; flex:1; }
+  .source-title{
+    display:block; color:var(--ink-hi); font-size:13px; font-weight:600;
+    text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .source-title:hover{ text-decoration:underline; }
+  .source-domain{ display:block; color:var(--ink-faint); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .source-copy-btn{
+    flex-shrink:0; width:26px; height:26px; border-radius:8px;
+    background:transparent; border:1px solid var(--line);
+    color:var(--ink-lo); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .15s ease, color .15s ease;
+  }
+  .source-copy-btn:hover{ background:var(--bg-panel-raised); color:var(--ink-hi); }
+  .source-copy-btn svg{ width:13px; height:13px; }
+  .source-copy-btn.copied{ color:var(--teal); border-color:var(--teal); }
+
   /* Thinking indicator */
   .thinking-row .bubble{
     display:flex; align-items:center; gap:9px;
@@ -1011,10 +1046,68 @@ function appendMessage(role, content, opts = {}){
     col.appendChild(buildTraceStrip(opts.meta));
   }
 
+  if (role === 'assistant' && Array.isArray(opts.meta?.sources) && opts.meta.sources.length){
+    col.appendChild(buildSourcesList(opts.meta.sources));
+  }
+
   row.appendChild(avatar);
   row.appendChild(col);
   chatInner.appendChild(row);
   return row;
+}
+
+function buildSourcesList(sources){
+  const wrap = document.createElement('div');
+  wrap.className = 'sources-list';
+
+  const label = document.createElement('div');
+  label.className = 'sources-label';
+  label.textContent = sources.length === 1 ? 'Source' : 'Sources';
+  wrap.appendChild(label);
+
+  sources.slice(0, 8).forEach((src, i) => {
+    const card = document.createElement('div');
+    card.className = 'source-card';
+
+    const num = document.createElement('span');
+    num.className = 'source-num';
+    num.textContent = String(i + 1);
+
+    const favicon = document.createElement('img');
+    favicon.className = 'source-favicon';
+    favicon.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(src.domain)}&sz=32`;
+    favicon.alt = '';
+    favicon.loading = 'lazy';
+
+    const text = document.createElement('div');
+    text.className = 'source-text';
+    text.innerHTML = `
+      <a class="source-title" href="${escapeHtml(src.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(src.title)}</a>
+      <span class="source-domain">${escapeHtml(src.domain)}</span>
+    `;
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'source-copy-btn';
+    copyBtn.type = 'button';
+    copyBtn.title = 'Copy citation';
+    copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/></svg>`;
+    copyBtn.addEventListener('click', async () => {
+      const citation = `${src.title}. ${src.domain}. ${src.url}`;
+      try {
+        await navigator.clipboard.writeText(citation);
+        copyBtn.classList.add('copied');
+        setTimeout(() => copyBtn.classList.remove('copied'), 1400);
+      } catch (_) { /* clipboard unavailable, ignore */ }
+    });
+
+    card.appendChild(num);
+    card.appendChild(favicon);
+    card.appendChild(text);
+    card.appendChild(copyBtn);
+    wrap.appendChild(card);
+  });
+
+  return wrap;
 }
 
 function buildTraceStrip(meta){
