@@ -523,6 +523,27 @@
   .source-copy-btn svg{ width:13px; height:13px; }
   .source-copy-btn.copied{ color:var(--teal); border-color:var(--teal); }
 
+  /* Inline [n] citation markers within message text */
+  .cite-marker{
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:10.5px; font-weight:700; line-height:1;
+    color:var(--violet-300);
+    background:rgba(139,92,246,0.16);
+    border:1px solid rgba(139,92,246,0.32);
+    border-radius:5px;
+    padding:1px 4px;
+    margin:0 1px;
+    vertical-align:super;
+    text-decoration:none;
+  }
+  .cite-marker--linked{ cursor:pointer; }
+  .cite-marker--linked:hover{ background:rgba(139,92,246,0.34); color:#fff; }
+  .source-card.flash{ animation:citeFlash 1.1s ease; }
+  @keyframes citeFlash{
+    0%{ box-shadow:0 0 0 2px var(--violet-400); background:rgba(139,92,246,0.16); }
+    100%{ box-shadow:none; background:var(--bg-panel); }
+  }
+
   /* Thinking indicator */
   .thinking-row .bubble{
     display:flex; align-items:center; gap:9px;
@@ -827,16 +848,30 @@ function renderMarkdown(raw){
 
   // Inline-level formatting applied within a single line/paragraph of text.
   function applyInline(str){
-    // inline code
-    str = str.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    // inline code — pulled out first (and restored at the end) so none of
+    // the passes below (especially citation-marker matching) ever touch
+    // bracketed text that's actually inside a code span, e.g. `arr[1]`.
+    const inlineCode = [];
+    str = str.replace(/`([^`\n]+)`/g, (m, code) => {
+      const idx = inlineCode.length;
+      inlineCode.push(code);
+      return `\u0000ICODE${idx}\u0000`;
+    });
     // links: only allow http(s)/mailto to avoid javascript: etc.
     str = str.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    // citation markers, e.g. "[1]" or "[12]" — left over once real
+    // [text](url) links above have already consumed their brackets.
+    // Rendered as a highlighted marker; wireCitations() upgrades matching
+    // ones to clickable links once the sources list is known.
+    str = str.replace(/\[(\d{1,2})\]/g, '<sup class="cite-marker" data-cite="$1">[$1]</sup>');
     // bold
     str = str.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
     // italics (* or _, single)
     str = str.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
     str = str.replace(/(?<!_)_([^_\n]+)_(?!_)/g, '<em>$1</em>');
+    // restore inline code
+    str = str.replace(/\u0000ICODE(\d+)\u0000/g, (m, idx) => `<code>${inlineCode[Number(idx)]}</code>`);
     return str;
   }
 
@@ -1154,10 +1189,50 @@ function appendMessage(role, content, opts = {}){
     col.appendChild(buildSourcesList(opts.meta.sources));
   }
 
+  if (role === 'assistant'){
+    wireCitations(col, opts.meta?.sources || []);
+  }
+
   row.appendChild(avatar);
   row.appendChild(col);
   chatInner.appendChild(row);
   return { row, col, bubble };
+}
+
+// Upgrades any [n] markers already rendered inside `col` into clickable
+// links that scroll to and briefly highlight their matching source card.
+// Markers with no matching source (n beyond sources.length, or no sources
+// at all) are left as plain highlighted markers — still visible, just not
+// clickable, so a bracket never renders back down to invisible plain text.
+function wireCitations(col, sources){
+  const markers = col.querySelectorAll('.cite-marker:not([data-wired])');
+  if (!markers.length) return;
+  const cards = col.querySelectorAll('.source-card');
+
+  markers.forEach((marker) => {
+    marker.setAttribute('data-wired', '1');
+    const num = parseInt(marker.dataset.cite, 10);
+    const card = Array.isArray(sources) && num >= 1 && num <= cards.length ? cards[num - 1] : null;
+    if (!card) return;
+
+    marker.classList.add('cite-marker--linked');
+    marker.setAttribute('role', 'button');
+    marker.setAttribute('tabindex', '0');
+    const src = sources[num - 1];
+    if (src?.domain) marker.title = src.domain;
+
+    const activate = () => {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.remove('flash');
+      // restart animation even if triggered again quickly
+      void card.offsetWidth;
+      card.classList.add('flash');
+    };
+    marker.addEventListener('click', activate);
+    marker.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); activate(); }
+    });
+  });
 }
 
 function buildSourcesList(sources){
@@ -1405,6 +1480,7 @@ async function sendMessage(text){
           if (Array.isArray(evt.meta.sources) && evt.meta.sources.length){
             assistantRefs.col.appendChild(buildSourcesList(evt.meta.sources));
           }
+          wireCitations(assistantRefs.col, evt.meta.sources || []);
         }
 
         if (evt.error){
