@@ -544,6 +544,19 @@
     100%{ box-shadow:none; background:var(--bg-panel); }
   }
 
+  /* Teaching-mode badge (Hint / Walkthrough / Answer / Explanation) */
+  .mode-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; font-weight:700; letter-spacing:.02em; text-transform:uppercase;
+    padding:4px 10px; border-radius:100px;
+    width:fit-content; margin-bottom:8px;
+  }
+  .mode-badge-icon{ font-size:12px; line-height:1; }
+  .mode-badge--hint{ background:rgba(240,180,41,0.14); color:var(--gold); border:1px solid rgba(240,180,41,0.32); }
+  .mode-badge--guided{ background:rgba(79,209,197,0.1); color:var(--teal); border:1px solid rgba(79,209,197,0.28); }
+  .mode-badge--direct{ background:rgba(139,92,246,0.14); color:var(--violet-300); border:1px solid rgba(139,92,246,0.3); }
+  .mode-badge--explanation{ background:rgba(203,187,234,0.08); color:var(--ink-mid); border:1px solid var(--line); }
+
   /* Thinking indicator */
   .thinking-row .bubble{
     display:flex; align-items:center; gap:9px;
@@ -1176,6 +1189,11 @@ function appendMessage(role, content, opts = {}){
   const col = document.createElement('div');
   col.className = 'msg-col';
 
+  if (role === 'assistant' && opts.meta?.mode){
+    const badge = buildModeBadge(opts.meta.mode);
+    if (badge) col.appendChild(badge);
+  }
+
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.innerHTML = renderMarkdown(content);
@@ -1204,6 +1222,23 @@ function appendMessage(role, content, opts = {}){
 // Markers with no matching source (n beyond sources.length, or no sources
 // at all) are left as plain highlighted markers — still visible, just not
 // clickable, so a bracket never renders back down to invisible plain text.
+const MODE_BADGES = {
+  hint: { icon: '💡', label: 'Hint', cls: 'hint' },
+  guided: { icon: '🧭', label: 'Walkthrough', cls: 'guided' },
+  direct: { icon: '✅', label: 'Answer', cls: 'direct' },
+  explanation: { icon: '📖', label: 'Explanation', cls: 'explanation' },
+  // 'chat' is intentionally excluded — small talk doesn't need a badge.
+};
+
+function buildModeBadge(mode){
+  const def = MODE_BADGES[String(mode || '').toLowerCase()];
+  if (!def) return null;
+  const badge = document.createElement('div');
+  badge.className = `mode-badge mode-badge--${def.cls}`;
+  badge.innerHTML = `<span class="mode-badge-icon">${def.icon}</span><span>${def.label}</span>`;
+  return badge;
+}
+
 function wireCitations(col, sources){
   const markers = col.querySelectorAll('.cite-marker:not([data-wired])');
   if (!markers.length) return;
@@ -1454,6 +1489,17 @@ async function sendMessage(text){
           activeConversationId = evt.conversation_id;
         }
 
+        if (evt.mode){
+          if (!assistantRefs){
+            thinkingRow.remove();
+            assistantRefs = appendMessage('assistant', '');
+          }
+          if (!assistantRefs.col.querySelector('.mode-badge')){
+            const badge = buildModeBadge(evt.mode);
+            if (badge) assistantRefs.col.insertBefore(badge, assistantRefs.bubble);
+          }
+        }
+
         if (typeof evt.delta === 'string' && evt.delta){
           if (!assistantRefs){
             thinkingRow.remove();
@@ -1473,6 +1519,10 @@ async function sendMessage(text){
           if (!assistantRefs){
             thinkingRow.remove();
             assistantRefs = appendMessage('assistant', fullText);
+          }
+          if (evt.meta.mode && !assistantRefs.col.querySelector('.mode-badge')){
+            const badge = buildModeBadge(evt.meta.mode);
+            if (badge) assistantRefs.col.insertBefore(badge, assistantRefs.bubble);
           }
           if (evt.meta.selected_route || evt.meta.confidence !== undefined){
             assistantRefs.col.appendChild(buildTraceStrip(evt.meta));
